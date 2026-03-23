@@ -290,8 +290,47 @@ async def extract_with_playwright(url: str) -> Article:
         )
 
 
+def extract_with_newspaper(url: str) -> Article:
+    """newspaper3k로 정적 사이트 추출 (가장 빠름, n8n 원본 방식)."""
+    try:
+        from newspaper import Article as NArticle
+
+        article = NArticle(url, language="ko")
+        article.download()
+        article.parse()
+
+        title = article.title or ""
+        raw_content = article.text or ""
+        thumbnail = article.top_image or ""
+
+        # 클리닝 적용
+        from knews.clean import clean_news_body
+        content = clean_news_body(raw_content, url)
+        content_length = len(content)
+
+        if content_length < 100:
+            return Article(
+                title=title, url=url, content=content,
+                content_length=content_length, method="newspaper3k",
+                thumbnail=thumbnail, success=False,
+                error=f"본문이 너무 짧습니다 ({content_length}자). JS 렌더링이 필요할 수 있습니다.",
+            )
+
+        return Article(
+            title=title, url=url, content=content,
+            content_length=content_length, method="newspaper3k",
+            thumbnail=thumbnail,
+        )
+
+    except Exception as e:
+        return Article(
+            title="", url=url, content="", content_length=0,
+            method="newspaper3k", success=False, error=str(e),
+        )
+
+
 async def extract_with_httpx(url: str) -> Article:
-    """httpx로 정적 페이지 추출 (빠름)."""
+    """httpx + BeautifulSoup으로 추출 (newspaper3k 실패 시 fallback)."""
     try:
         async with httpx.AsyncClient(
             follow_redirects=True,
@@ -344,19 +383,27 @@ async def extract_article_with_options(url: str, prefer_browser: bool = False) -
     URL에서 기사 본문 추출.
     prefer_browser=True면 Playwright를 우선 사용한다.
     """
+    # JS 사이트 → Playwright 직행
     if prefer_browser or _needs_playwright(url):
         return await extract_with_playwright(url)
 
-    # httpx 먼저 시도 (빠름)
-    result = await extract_with_httpx(url)
+    # 1단계: newspaper3k (가장 빠름)
+    result = extract_with_newspaper(url)
+    if result.success and result.content_length >= 200:
+        return result
+
+    # 2단계: httpx + BeautifulSoup
+    httpx_result = await extract_with_httpx(url)
+    if httpx_result.success and httpx_result.content_length > (result.content_length or 0):
+        result = httpx_result
     if result.success and not (
         _looks_like_news_article(url) and result.content_length < 700
     ):
         return result
 
-    # httpx 실패 또는 품질 미달 → Playwright fallback
+    # 3단계: Playwright fallback
     browser_result = await extract_with_playwright(url)
-    if browser_result.success and browser_result.content_length >= result.content_length:
+    if browser_result.success and browser_result.content_length >= (result.content_length or 0):
         return browser_result
     return result if result.success else browser_result
 

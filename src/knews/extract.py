@@ -172,6 +172,7 @@ def _parse_article_html(html: str, url: str) -> tuple[str, str, str]:
             ".article_view", ".articleView", ".view_con",
             "#articleTxt", "#article-view-content-div",
             "#newsText", ".news_txt", ".articleContent",
+            ".news_view",
         ]
         for sel in selectors:
             el = soup.select_one(sel)

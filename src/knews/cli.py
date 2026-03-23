@@ -141,12 +141,20 @@ def cmd_search(args):
     if getattr(args, "latest", False):
         articles.sort(key=lambda a: a.get("published_date", ""), reverse=True)
 
-    # 3단계: CSV 자동 저장 + 터미널 출력
+    # 3단계: CSV 자동 저장 (다운로드 폴더) + 터미널 출력
     query_label = queries[0] if len(queries) == 1 else ",".join(queries)
     slug = query_label.replace(" ", "_").replace(",", "_")[:20]
-    save_path = getattr(args, "file", None) or f"news_{slug}.csv"
-    if not save_path.endswith(".csv"):
-        save_path += ".csv"
+    from datetime import datetime as _dt
+    timestamp = _dt.now().strftime("%Y%m%d_%H%M")
+    filename = getattr(args, "file", None) or f"news_{slug}_{timestamp}.csv"
+    if not filename.endswith(".csv"):
+        filename += ".csv"
+
+    # 다운로드 폴더에 저장
+    downloads = Path.home() / "Downloads"
+    if not downloads.exists():
+        downloads = Path.home()  # Downloads 없으면 홈 폴더
+    save_path = str(downloads / filename)
 
     to_csv(articles, save_path)
     print_results(articles, query_label)

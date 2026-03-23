@@ -77,13 +77,12 @@ def to_csv(articles: list, filepath: str | None = None, query: str = "") -> str:
     """CSV 형식으로 변환. filepath가 있으면 파일로 저장."""
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["키워드", "우선순위", "카테고리", "제목", "출처", "URL", "본문길이", "성공", "본문"])
+    writer.writerow(["키워드", "우선순위", "제목", "출처", "URL", "본문길이", "성공", "본문"])
 
     for i, a in enumerate(articles, 1):
         writer.writerow([
             a.get("keyword", query),
             i,
-            a.get("category", ""),
             a.get("title", ""),
             a.get("source", ""),
             a.get("url", ""),
@@ -182,8 +181,8 @@ def to_excel(articles: list, filepath: str, query: str = ""):
     )
 
     # A1부터 헤더
-    headers = ["키워드", "우선순위", "카테고리", "제목", "출처", "URL", "본문길이", "성공", "본문"]
-    col_widths = [12, 8, 10, 40, 15, 50, 10, 6, 80]
+    headers = ["키워드", "우선순위", "제목", "출처", "URL", "본문길이", "성공", "본문"]
+    col_widths = [12, 8, 40, 15, 50, 10, 6, 80]
 
     for col_idx, (header, width) in enumerate(zip(headers, col_widths), 1):
         cell = ws.cell(row=1, column=col_idx, value=header)
@@ -209,7 +208,6 @@ def to_excel(articles: list, filepath: str, query: str = ""):
         values = [
             a.get("keyword", query),
             i,
-            a.get("category", ""),
             a.get("title", ""),
             a.get("source", ""),
             a.get("url", ""),

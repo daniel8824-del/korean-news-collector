@@ -156,7 +156,7 @@ def cmd_search(args):
         downloads = Path.home()  # Downloads 없으면 홈 폴더
     save_path = str(downloads / filename)
 
-    to_csv(articles, save_path)
+    to_csv(articles, save_path, query_label)
     print_results(articles, query_label)
 
 

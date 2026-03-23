@@ -73,20 +73,21 @@ def print_results(articles: list, query: str = ""):
     console.print()
 
 
-def to_csv(articles: list, filepath: str | None = None) -> str:
+def to_csv(articles: list, filepath: str | None = None, query: str = "") -> str:
     """CSV 형식으로 변환. filepath가 있으면 파일로 저장."""
     output = io.StringIO()
     writer = csv.writer(output)
-    writer.writerow(["번호", "제목", "URL", "출처", "본문길이", "추출방법", "성공", "본문"])
+    writer.writerow(["키워드", "우선순위", "카테고리", "제목", "출처", "URL", "본문길이", "성공", "본문"])
 
     for i, a in enumerate(articles, 1):
         writer.writerow([
+            a.get("keyword", query),
             i,
+            a.get("category", ""),
             a.get("title", ""),
-            a.get("url", ""),
             a.get("source", ""),
+            a.get("url", ""),
             a.get("content_length", 0),
-            a.get("method", ""),
             "O" if a.get("success", True) else "X",
             a.get("content", ""),
         ])
@@ -95,7 +96,9 @@ def to_csv(articles: list, filepath: str | None = None) -> str:
 
     if filepath:
         path = _prepare_output_path(filepath)
-        path.write_text(csv_text, encoding="utf-8-sig")
+        # newline="" 으로 Windows에서 빈 줄 방지
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write(csv_text)
         console.print(f"[green]CSV 저장: {filepath}[/green]")
 
     return csv_text

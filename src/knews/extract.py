@@ -126,7 +126,15 @@ def _parse_article_html(html: str, url: str) -> tuple[str, str, str]:
     # 불필요한 태그 제거
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "iframe", "noscript"]):
         tag.decompose()
-    for el in soup.find_all(class_=re.compile(r"ad|advertisement|banner|sidebar|related|comment|share|social", re.I)):
+    for el in soup.find_all(class_=re.compile(r"\bad\b|advertisement|banner|sidebar|related|comment|share|social", re.I)):
+        el.decompose()
+    # 뉴스 사이트 공통 노이즈 컨테이너 제거
+    noise_classes = re.compile(
+        r"txt-bx|recommend|popular|most_read|hot_news|rank|"
+        r"more_news|aside_|widget|promo|dable|taboola|outbrain",
+        re.I,
+    )
+    for el in soup.find_all(class_=noise_classes):
         el.decompose()
 
     # 제목
@@ -173,7 +181,7 @@ def _parse_article_html(html: str, url: str) -> tuple[str, str, str]:
                     texts = [p.get_text(strip=True) for p in paragraphs if len(p.get_text(strip=True)) > 20]
                     if texts:
                         content = "\n\n".join(texts)
-                else:
+                if len(content) < 100:
                     content = el.get_text(separator="\n", strip=True)
                 if len(content) > 100:
                     break
@@ -204,6 +212,10 @@ def _parse_article_html(html: str, url: str) -> tuple[str, str, str]:
     from knews.clean import clean_news_body
     content = clean_news_body(content, url)
 
+    # nate.com 자동 요약 감지: 실제 본문 아님
+    if "기사 제목과 본문 내용을 자동 요약한 내용입니다" in content:
+        content = ""
+
     return title, content, thumbnail
 
 
@@ -219,10 +231,13 @@ async def extract_with_playwright(url: str) -> Article:
         )
 
     try:
+        from playwright_stealth import Stealth
+
         async with async_playwright() as p:
             browser = await p.chromium.launch(
                 headless=True,
                 args=[
+                    "--disable-blink-features=AutomationControlled",
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
                     "--disable-dev-shm-usage",
@@ -240,6 +255,10 @@ async def extract_with_playwright(url: str) -> Article:
                 timezone_id="Asia/Seoul",
             )
             page = await context.new_page()
+
+            # Stealth 적용 (봇 감지 우회)
+            stealth = Stealth()
+            await stealth.apply_stealth_async(page)
 
             # 이미지/폰트 차단 (속도 향상)
             await page.route(
@@ -381,31 +400,21 @@ async def extract_article(url: str) -> Article:
 async def extract_article_with_options(url: str, prefer_browser: bool = False) -> Article:
     """
     URL에서 기사 본문 추출.
-    prefer_browser=True면 Playwright를 우선 사용한다.
+    우선순위: Playwright(stealth) → newspaper3k → (Tavily 본문은 cli에서 처리)
+    한국 뉴스는 JS 렌더링이 대부분이라 Playwright 먼저.
     """
-    # JS 사이트 → Playwright 직행
-    if prefer_browser or _needs_playwright(url):
-        return await extract_with_playwright(url)
-
-    # 1단계: newspaper3k (가장 빠름)
-    result = extract_with_newspaper(url)
+    # 1단계: Playwright + Stealth (가장 확실)
+    result = await extract_with_playwright(url)
     if result.success and result.content_length >= 200:
         return result
 
-    # 2단계: httpx + BeautifulSoup
-    httpx_result = await extract_with_httpx(url)
-    if httpx_result.success and httpx_result.content_length > (result.content_length or 0):
-        result = httpx_result
-    if result.success and not (
-        _looks_like_news_article(url) and result.content_length < 700
-    ):
-        return result
+    # 2단계: newspaper3k fallback (방화벽 차단 시)
+    np_result = extract_with_newspaper(url)
+    if np_result.success and np_result.content_length > (result.content_length or 0):
+        return np_result
 
-    # 3단계: Playwright fallback
-    browser_result = await extract_with_playwright(url)
-    if browser_result.success and browser_result.content_length >= (result.content_length or 0):
-        return browser_result
-    return result if result.success else browser_result
+    # 둘 다 실패 시 더 나은 결과 반환
+    return result if result.success else np_result
 
 
 def extract_article_sync(url: str, prefer_browser: bool = False) -> Article:

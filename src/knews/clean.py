@@ -109,6 +109,9 @@ def clean_news_body(raw_content: str, url: str = "") -> str:
     raw_content = re.sub(r"[가-힣]{2,4}\s*기자\s*\(\s*\)", "", raw_content)
     raw_content = re.sub(r"\nOSEN\s*(DB)?\s*$", "", raw_content, flags=re.MULTILINE)
 
+    # 일반 이메일 주소 단독 라인 또는 꼬리
+    raw_content = re.sub(r"\n?[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.(co\.kr|com|net)\s*$", "", raw_content, flags=re.MULTILINE)
+
     # 인라인 날짜 패턴
     raw_content = re.sub(r"입력\s*\d{4}\.\d{2}\.\d{2}\.\s*\d{2}:\d{2}", "", raw_content)
     raw_content = re.sub(r"업데이트\s*\d{4}\.\d{2}\.\d{2}\.\s*\d{2}:\d{2}", "", raw_content)
@@ -236,9 +239,17 @@ def _find_end_index(lines: list[str], start_idx: int, is_channela: bool, is_news
             return i
         if re.match(r"^(SNS 공유하기|함께 볼만한|이 시각|top|댓글|Copyright|AD$)", line, re.IGNORECASE):
             return i
+        if re.match(r"^(꼭 봐야 할|함께 보면 좋은|놓칠 수 없는|당신을 위한|오늘의 추천|오늘의 인기)", line):
+            return i
+        if re.match(r"^(Advertisement|by Dable|View English)", line, re.IGNORECASE):
+            return i
         if re.match(r"^[가-힣]{2,4}\s*기자\s+[a-zA-Z0-9]+@[a-zA-Z]+\.(co\.kr|com)$", line):
             return i
         if "[[한겨레 후원하기]" in line:
+            return i
+
+        # edaily 푸터
+        if "케이지타워" in line or "이데일리 대표전화" in line:
             return i
 
     return len(lines)
@@ -329,12 +340,20 @@ def _filter_lines(lines: list[str], is_channela: bool, is_news1: bool, is_maxmov
         if re.search(r"ⓒ\s*(AFP|뉴스1|맥스무비|채널A)", line):
             continue
 
+        # 주식 위젯 노이즈
+        if re.search(r"(KOSPI|KOSDAQ|현재가|전일대비|등락률|증권정보)", line) and re.search(r"\d{3,}", line):
+            continue
+
         # 광고
         if re.search(r"Taboola|Sponsored|You May Like|Read More|Shop Now|Buy Now", line, re.IGNORECASE):
             continue
 
         # 푸터 패턴 (언론사별)
         if _is_footer_line(line, is_channela, is_news1, is_maxmovie):
+            continue
+
+        # edaily 푸터 주소/사업자 정보
+        if re.search(r"서울시 중구 통일로|사업자번호", line):
             continue
 
         # Copyright / 저작권 패턴

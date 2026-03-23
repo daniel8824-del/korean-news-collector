@@ -7,6 +7,15 @@ from urllib.parse import urlparse
 import httpx
 
 
+# 뉴스 포털/애그리게이터 (자동요약만 제공, 원본 아님)
+EXCLUDED_DOMAINS = {
+    "news.nate.com",
+    "nate.com",
+    "msn.com",
+    "www.msn.com",
+}
+
+
 @dataclass
 class NewsResult:
     """검색 결과 하나"""
@@ -84,7 +93,7 @@ def _search_serpapi(
                 source = story.get("source", {}).get("name", "")
                 break
 
-        if url:
+        if url and not any(d in url for d in EXCLUDED_DOMAINS):
             results.append(NewsResult(
                 title=item.get("title", ""),
                 url=url,
@@ -145,6 +154,9 @@ def _search_tavily(
         source = ""
         if item_url:
             source = urlparse(item_url).netloc.replace("www.", "")
+
+        if any(d in item_url for d in EXCLUDED_DOMAINS):
+            continue
 
         results.append(NewsResult(
             title=item.get("title", ""),

@@ -1,4 +1,4 @@
-"""검색 결과 출력 포맷터 - 터미널, CSV, JSON, Markdown"""
+"""검색 결과 출력 포맷터 - 터미널, CSV, JSON, Markdown, Excel"""
 
 import csv
 import json
@@ -158,3 +158,82 @@ def to_markdown(articles: list, query: str = "", filepath: str | None = None) ->
         console.print(f"[green]Markdown 저장: {filepath}[/green]")
 
     return md_text
+
+
+def to_excel(articles: list, filepath: str, query: str = ""):
+    """Excel(xlsx) 형식으로 저장. 학습자가 바로 열어볼 수 있는 포맷."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "뉴스 수집 결과"
+
+    # 헤더 스타일
+    header_font = Font(name="맑은 고딕", bold=True, color="FFFFFF", size=11)
+    header_fill = PatternFill(start_color="2F5496", end_color="2F5496", fill_type="solid")
+    header_align = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    thin_border = Border(
+        left=Side(style="thin"), right=Side(style="thin"),
+        top=Side(style="thin"), bottom=Side(style="thin"),
+    )
+
+    # 메타 정보 행
+    ws.merge_cells("A1:H1")
+    meta_cell = ws["A1"]
+    meta_cell.value = f"뉴스 수집: {query}  |  {datetime.now().strftime('%Y-%m-%d %H:%M')}  |  총 {len(articles)}건"
+    meta_cell.font = Font(name="맑은 고딕", bold=True, size=12, color="2F5496")
+    meta_cell.alignment = Alignment(horizontal="left", vertical="center")
+    ws.row_dimensions[1].height = 30
+
+    # 헤더
+    headers = ["번호", "제목", "URL", "출처", "본문길이", "추출방법", "성공", "본문"]
+    col_widths = [6, 40, 50, 15, 10, 10, 6, 80]
+
+    for col_idx, (header, width) in enumerate(zip(headers, col_widths), 1):
+        cell = ws.cell(row=2, column=col_idx, value=header)
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = header_align
+        cell.border = thin_border
+        ws.column_dimensions[chr(64 + col_idx)].width = width
+
+    ws.row_dimensions[2].height = 25
+
+    # 데이터 행
+    body_font = Font(name="맑은 고딕", size=10)
+    wrap_align = Alignment(vertical="top", wrap_text=True)
+    success_fill = PatternFill(start_color="E2EFDA", end_color="E2EFDA", fill_type="solid")
+    fail_fill = PatternFill(start_color="FCE4EC", end_color="FCE4EC", fill_type="solid")
+
+    for i, a in enumerate(articles, 1):
+        row = i + 2
+        ok = a.get("success", True)
+        fill = success_fill if ok else fail_fill
+
+        values = [
+            i,
+            a.get("title", ""),
+            a.get("url", ""),
+            a.get("source", ""),
+            a.get("content_length", 0),
+            a.get("method", ""),
+            "O" if ok else "X",
+            a.get("content", "")[:32000],  # Excel 셀 글자수 제한
+        ]
+
+        for col_idx, val in enumerate(values, 1):
+            cell = ws.cell(row=row, column=col_idx, value=val)
+            cell.font = body_font
+            cell.alignment = wrap_align
+            cell.border = thin_border
+            cell.fill = fill
+
+    # 필터 + 틀 고정
+    ws.auto_filter.ref = f"A2:H{len(articles) + 2}"
+    ws.freeze_panes = "A3"
+
+    # 저장
+    path = _prepare_output_path(filepath)
+    wb.save(str(path))
+    console.print(f"[green]Excel 저장: {filepath}[/green]")

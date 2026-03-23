@@ -3,6 +3,7 @@
 import asyncio
 import re
 from dataclasses import dataclass
+from urllib.parse import urlparse
 
 import httpx
 from bs4 import BeautifulSoup
@@ -25,7 +26,37 @@ JS_RENDER_SITES = {
     "v.daum.net",
     "n.news.naver.com",
     "vogue.co.kr",
+    "news1.kr",
+    "mk.co.kr",
+    "news.kbs.co.kr",
+    "etnews.com",
+    "nocutnews.co.kr",
+    "joongang.co.kr",
+    "donga.com",
+    "khan.co.kr",
+    "hani.co.kr",
+    "sedaily.com",
+    "mt.co.kr",
+    "biz.heraldcorp.com",
+    "edaily.co.kr",
+    "asiae.co.kr",
+    "fnnews.com",
+    "newsis.com",
+    "ddaily.co.kr",
+    "inews24.com",
+    "mbn.co.kr",
+    "yna.co.kr",
+    "maxmovie.com",
 }
+
+PLAYWRIGHT_UPGRADE_HINTS = (
+    "articleview",
+    "/news/view",
+    "view.html",
+    "view.do",
+    "endpage.do",
+    "/article/",
+)
 
 
 @dataclass
@@ -43,9 +74,24 @@ class Article:
 
 def _needs_playwright(url: str) -> bool:
     """URL이 JS 렌더링이 필요한 사이트인지 판별."""
-    from urllib.parse import urlparse
     domain = urlparse(url).netloc.replace("www.", "")
     return any(site in domain for site in JS_RENDER_SITES)
+
+
+def _looks_like_news_article(url: str) -> bool:
+    """URL이 뉴스 기사 페이지처럼 보이는지 판별."""
+    parsed = urlparse(url)
+    domain = parsed.netloc.replace("www.", "")
+    path = f"{parsed.path}?{parsed.query}".lower()
+    if _needs_playwright(url):
+        return True
+    if domain.endswith(".kr") and any(hint in path for hint in PLAYWRIGHT_UPGRADE_HINTS):
+        return True
+    newsy_domains = (
+        "news", "chosun", "joongang", "donga", "hani", "khan",
+        "etnews", "nocut", "mk.co.kr", "imbc", "sbs", "ytn",
+    )
+    return any(token in domain for token in newsy_domains)
 
 
 def _extract_thumbnail(soup: BeautifulSoup, base_url: str) -> str:
@@ -114,6 +160,10 @@ def _parse_article_html(html: str, url: str) -> tuple[str, str, str]:
             'div[itemprop="articleBody"]', ".articleBody",
             "#articleBodyContents", "#newsEndContents",
             ".news_cnt_detail_wrap", "#articeBody",
+            ".article_txt", ".newsct_article", ".viewer_article",
+            ".article_view", ".articleView", ".view_con",
+            "#articleTxt", "#article-view-content-div",
+            "#newsText", ".news_txt", ".articleContent",
         ]
         for sel in selectors:
             el = soup.select_one(sel)
@@ -200,6 +250,17 @@ async def extract_with_playwright(url: str) -> Article:
             try:
                 await page.goto(url, wait_until="domcontentloaded", timeout=20000)
                 await page.wait_for_timeout(3000)
+                try:
+                    await page.wait_for_selector(
+                        "article, main, #articleBodyContents, #newsEndContents, "
+                        ".article-body, .article-content, .news-body, "
+                        ".news_cnt_detail_wrap, .article_txt, .viewer_article, "
+                        ".article_view, #articleTxt, #article-view-content-div, "
+                        "[itemprop='articleBody']",
+                        timeout=5000,
+                    )
+                except Exception:
+                    pass
             except Exception:
                 pass  # 타임아웃이어도 현재 HTML 사용
 
@@ -275,18 +336,31 @@ async def extract_article(url: str) -> Article:
     URL에서 기사 본문 추출.
     JS 사이트 → Playwright, 나머지 → httpx 시도 후 실패 시 Playwright fallback.
     """
-    if _needs_playwright(url):
+    return await extract_article_with_options(url)
+
+
+async def extract_article_with_options(url: str, prefer_browser: bool = False) -> Article:
+    """
+    URL에서 기사 본문 추출.
+    prefer_browser=True면 Playwright를 우선 사용한다.
+    """
+    if prefer_browser or _needs_playwright(url):
         return await extract_with_playwright(url)
 
     # httpx 먼저 시도 (빠름)
     result = await extract_with_httpx(url)
-    if result.success:
+    if result.success and not (
+        _looks_like_news_article(url) and result.content_length < 700
+    ):
         return result
 
-    # httpx 실패 → Playwright fallback
-    return await extract_with_playwright(url)
+    # httpx 실패 또는 품질 미달 → Playwright fallback
+    browser_result = await extract_with_playwright(url)
+    if browser_result.success and browser_result.content_length >= result.content_length:
+        return browser_result
+    return result if result.success else browser_result
 
 
-def extract_article_sync(url: str) -> Article:
+def extract_article_sync(url: str, prefer_browser: bool = False) -> Article:
     """동기 래퍼."""
-    return asyncio.run(extract_article(url))
+    return asyncio.run(extract_article_with_options(url, prefer_browser=prefer_browser))

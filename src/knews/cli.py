@@ -5,6 +5,7 @@ import asyncio
 import sys
 import os
 import subprocess
+import shutil
 from pathlib import Path
 
 from dotenv import load_dotenv
@@ -16,14 +17,14 @@ console = Console()
 def cmd_search(args):
     """뉴스 검색 + 본문 추출."""
     from knews.search import search_news
-    from knews.extract import extract_article
-    from knews.output import print_results, to_csv, to_json, to_markdown
+    from knews.extract import extract_article_with_options
+    from knews.output import print_results, to_csv, to_json, to_markdown, to_excel
 
     query = " ".join(args.query)
     console.print(f"\n[bold blue]뉴스 검색 중...[/bold blue] '{query}'")
-    console.print(f"  최근 {args.days}일 / 최대 {args.count}건", style="dim")
+    console.print(f"  최근 {args.days}일 / 최대 {args.count}건 / 백엔드: {args.backend}", style="dim")
 
-    # 1단계: Tavily 검색
+    # 1단계: 검색 (Tavily 또는 SerpAPI)
     try:
         results = search_news(
             query=query,
@@ -31,6 +32,7 @@ def cmd_search(args):
             days=args.days,
             include_content=True,
             site=args.site,
+            backend=args.backend,
         )
     except SystemExit as e:
         console.print(str(e))
@@ -56,10 +58,15 @@ def cmd_search(args):
             "success": True,
         }
 
-        # Tavily 본문이 짧으면 직접 추출
-        if len(r.content) < 200 and not args.fast:
+        # Tavily 본문이 짧거나 브라우저 우선 모드면 직접 추출
+        if (len(r.content) < 200 or args.prefer_browser) and not args.fast:
             console.print(f"  [{i}/{len(results)}] [dim]본문 추출 중: {r.title[:40]}...[/dim]")
-            extracted = asyncio.run(extract_article(r.url))
+            extracted = asyncio.run(
+                extract_article_with_options(
+                    r.url,
+                    prefer_browser=args.prefer_browser,
+                )
+            )
             if extracted.success and len(extracted.content) > len(r.content):
                 article_data["content"] = extracted.content
                 article_data["content_length"] = extracted.content_length
@@ -93,6 +100,11 @@ def cmd_search(args):
             save_path = f"news_{query.replace(' ', '_')[:20]}.md"
         to_markdown(articles, query, save_path)
         print_results(articles, query)
+    elif fmt in ("excel", "xlsx"):
+        if not save_path:
+            save_path = f"news_{query.replace(' ', '_')[:20]}.xlsx"
+        to_excel(articles, save_path, query)
+        print_results(articles, query)
     else:
         # 터미널 출력만
         print_results(articles, query)
@@ -102,7 +114,7 @@ def cmd_search(args):
 
 def cmd_extract(args):
     """단일 URL 또는 파일에서 기사 추출."""
-    from knews.extract import extract_article
+    from knews.extract import extract_article_with_options
     from knews.output import print_results, to_csv, to_json
 
     urls = []
@@ -132,7 +144,12 @@ def cmd_extract(args):
     articles = []
     for i, url in enumerate(urls, 1):
         console.print(f"  [{i}/{len(urls)}] {url[:60]}...")
-        result = asyncio.run(extract_article(url))
+        result = asyncio.run(
+            extract_article_with_options(
+                url,
+                prefer_browser=args.prefer_browser,
+            )
+        )
         articles.append({
             "title": result.title,
             "url": result.url,
@@ -150,6 +167,9 @@ def cmd_extract(args):
         ext = Path(args.save).suffix.lower()
         if ext == ".csv":
             to_csv(articles, args.save)
+        elif ext == ".xlsx":
+            from knews.output import to_excel
+            to_excel(articles, args.save)
         else:
             to_json(articles, args.save)
 
@@ -170,19 +190,47 @@ def cmd_setup(args):
         console.print("  playwright install chromium")
 
 
+def cmd_init(args):
+    """학습자용 초기 설정 파일 생성."""
+    target = Path(args.path).expanduser() if args.path else Path.home() / ".env"
+    example = Path(__file__).resolve().parents[2] / ".env.example"
+
+    if target.exists() and not args.force:
+        console.print(f"[yellow]이미 파일이 있습니다:[/yellow] {target}")
+        console.print("덮어쓰려면 `knews init --force` 를 사용하세요.")
+        return
+
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(example, target)
+
+    console.print(f"\n[green]환경설정 파일 생성:[/green] {target}")
+    console.print("1. 파일을 열고 `TAVILY_API_KEY=tvly-...` 값을 넣으세요.")
+    console.print("2. 확인은 `knews doctor`")
+    console.print("3. 검색은 `knews collect \"반도체 뉴스\"`")
+    console.print()
+
+
 def cmd_doctor(args):
     """환경 설정 상태 점검."""
     from knews import __version__
 
     console.print(f"\n[bold blue]knews 환경 점검[/bold blue] [dim]v{__version__}[/dim]\n")
 
+    # Tavily
     api_key = os.getenv("TAVILY_API_KEY", "")
     if api_key:
         masked = f"{api_key[:7]}...{api_key[-4:]}" if len(api_key) > 11 else "(설정됨)"
         console.print(f"[green]OK[/green] TAVILY_API_KEY: {masked}")
     else:
-        console.print("[red]FAIL[/red] TAVILY_API_KEY: 설정되지 않음")
-        console.print("      해결: https://app.tavily.com 에서 키 발급 후 환경변수 또는 ~/.env 에 설정")
+        console.print("[red]FAIL[/red] TAVILY_API_KEY: 설정되지 않음 (Tavily 사용 불가)")
+
+    # SerpAPI
+    serp_key = os.getenv("SERPAPI_API_KEY", "")
+    if serp_key:
+        masked = f"{serp_key[:7]}...{serp_key[-4:]}" if len(serp_key) > 11 else "(설정됨)"
+        console.print(f"[green]OK[/green] SERPAPI_API_KEY: {masked}")
+    else:
+        console.print("[yellow]WARN[/yellow] SERPAPI_API_KEY: 설정되지 않음 (SerpAPI 사용 불가)")
 
     playwright_ok = False
     browser_ok = False
@@ -209,6 +257,7 @@ def cmd_doctor(args):
         console.print("      해결: knews setup")
 
     console.print("\n[bold]추천 시작 명령[/bold]")
+    console.print("  knews init")
     console.print("  knews search \"AI 인공지능\"")
     console.print("  knews search \"경제 뉴스\" -n 5 -d 3 -o csv")
     console.print("  knews extract https://news.jtbc.co.kr/article/...")
@@ -237,10 +286,11 @@ def main():
 
     parser = argparse.ArgumentParser(
         prog="knews",
-        description="구글 뉴스 수집기 - Tavily 검색 + Playwright 추출",
+        description="구글 뉴스 감각의 수집기 - Tavily 검색 + Playwright 추출",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 사용 예시:
+  knews init                               ~/.env 설정 파일 생성
   knews search "AI 인공지능"              검색 후 터미널 출력
   knews search "경제 뉴스" -n 5 -d 3      최근 3일, 5건
   knews search "JTBC" -o csv              CSV로 저장
@@ -248,6 +298,8 @@ def main():
 
   knews extract https://news.jtbc.co.kr/...  단일 URL 추출
   knews extract --file urls.txt              파일에서 일괄 추출
+  knews extract URL --prefer-browser         브라우저 우선 추출
+  knews collect "반도체 뉴스"                 search와 동일한 별칭
 
   knews setup                             Playwright 브라우저 설치
   knews doctor                            API 키/브라우저 상태 점검
@@ -257,7 +309,7 @@ def main():
   TAVILY_API_KEY    Tavily API 키 (필수, https://app.tavily.com)
         """,
     )
-    parser.add_argument("-v", "--version", action="version", version="knews 0.2.0")
+    parser.add_argument("-v", "--version", action="version", version="knews 0.4.0")
 
     sub = parser.add_subparsers(dest="command", help="명령어")
 
@@ -266,10 +318,12 @@ def main():
     p_search.add_argument("query", nargs="+", help="검색어")
     p_search.add_argument("-n", "--count", type=int, default=10, help="결과 수 (기본: 10)")
     p_search.add_argument("-d", "--days", type=int, default=7, help="최근 N일 (기본: 7)")
-    p_search.add_argument("-o", "--output", default="terminal", choices=["terminal", "csv", "json", "md"], help="출력 형식")
+    p_search.add_argument("-o", "--output", default="terminal", choices=["terminal", "csv", "json", "md", "excel"], help="출력 형식 (excel=xlsx)")
     p_search.add_argument("-s", "--save", help="저장 파일 경로")
     p_search.add_argument("--site", help="특정 사이트 제한 (예: jtbc.co.kr)")
+    p_search.add_argument("--backend", default="tavily", choices=["tavily"], help="검색 백엔드 (기본: tavily)")
     p_search.add_argument("--fast", action="store_true", help="Tavily 결과만 사용 (추가 추출 안 함)")
+    p_search.add_argument("--prefer-browser", action="store_true", help="모든 기사에 대해 Playwright를 우선 사용")
     p_search.set_defaults(func=cmd_search)
 
     # extract
@@ -277,11 +331,31 @@ def main():
     p_extract.add_argument("url", nargs="?", help="추출할 URL")
     p_extract.add_argument("-f", "--file", help="URL 목록 파일 (한 줄에 하나)")
     p_extract.add_argument("-s", "--save", help="저장 파일 경로 (.csv 또는 .json)")
+    p_extract.add_argument("--prefer-browser", action="store_true", help="httpx보다 Playwright를 먼저 사용")
     p_extract.set_defaults(func=cmd_extract)
+
+    # collect
+    p_collect = sub.add_parser("collect", help="search와 동일한 학습자용 별칭")
+    p_collect.add_argument("query", nargs="+", help="검색어")
+    p_collect.add_argument("-n", "--count", type=int, default=10, help="결과 수 (기본: 10)")
+    p_collect.add_argument("-d", "--days", type=int, default=7, help="최근 N일 (기본: 7)")
+    p_collect.add_argument("-o", "--output", default="terminal", choices=["terminal", "csv", "json", "md", "excel"], help="출력 형식 (excel=xlsx)")
+    p_collect.add_argument("-s", "--save", help="저장 파일 경로")
+    p_collect.add_argument("--site", help="특정 사이트 제한 (예: jtbc.co.kr)")
+    p_collect.add_argument("--backend", default="tavily", choices=["tavily"], help="검색 백엔드 (기본: tavily)")
+    p_collect.add_argument("--fast", action="store_true", help="Tavily 결과만 사용 (추가 추출 안 함)")
+    p_collect.add_argument("--prefer-browser", action="store_true", help="모든 기사에 대해 Playwright를 우선 사용")
+    p_collect.set_defaults(func=cmd_search)
 
     # setup
     p_setup = sub.add_parser("setup", help="Playwright 브라우저 설치")
     p_setup.set_defaults(func=cmd_setup)
+
+    # init
+    p_init = sub.add_parser("init", help="~/.env 설정 파일 생성")
+    p_init.add_argument("--path", help="생성할 .env 경로 (기본: ~/.env)")
+    p_init.add_argument("--force", action="store_true", help="기존 파일 덮어쓰기")
+    p_init.set_defaults(func=cmd_init)
 
     # doctor
     p_doctor = sub.add_parser("doctor", help="API 키와 Playwright 상태 점검")

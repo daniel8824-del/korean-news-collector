@@ -102,6 +102,36 @@ def to_csv(articles: list, filepath: str | None = None, query: str = "") -> str:
     return csv_text
 
 
+def to_txt(articles: list, filepath: str, query: str = ""):
+    """전체 정보 텍스트 파일로 저장."""
+    path = _prepare_output_path(filepath)
+    lines = []
+    lines.append(f"뉴스 수집 결과: {query}")
+    lines.append(f"수집일시: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+    lines.append(f"총 {len(articles)}건")
+    lines.append("=" * 70)
+
+    for i, a in enumerate(articles, 1):
+        title = a.get("title", "")
+        source = a.get("source", "")
+        url = a.get("url", "")
+        content = a.get("content", "")
+        length = a.get("content_length", len(content))
+        ok = a.get("success", True)
+
+        lines.append(f"\n[{i}] {title}")
+        lines.append(f"    출처: {source}")
+        lines.append(f"    URL:  {url}")
+        lines.append(f"    글자수: {length:,}자  {'성공' if ok else '실패'}")
+        lines.append("-" * 70)
+        lines.append(content)
+        lines.append("=" * 70)
+
+    text = "\n".join(lines) + "\n"
+    path.write_text(text, encoding="utf-8")
+    console.print(f"[green]TXT 저장: {filepath}[/green]")
+
+
 def to_json(articles: list, filepath: str | None = None) -> str:
     """JSON 형식으로 변환."""
     data = {

@@ -35,7 +35,7 @@ def cmd_search(args):
     """뉴스 검색 + 본문 추출. 콤마로 여러 키워드 동시 검색 가능."""
     from knews.search import search_news
     from knews.extract import extract_article_with_options
-    from knews.output import print_results, to_csv, to_json, to_markdown, to_excel
+    from knews.output import print_results, to_csv, to_txt, to_json, to_markdown, to_excel
 
     queries, count = _parse_queries(args)
 
@@ -157,6 +157,8 @@ def cmd_search(args):
     save_path = str(downloads / filename)
 
     to_csv(articles, save_path, query_label)
+    txt_path = save_path.rsplit(".", 1)[0] + ".txt"
+    to_txt(articles, txt_path, query_label)
     print_results(articles, query_label)
 
 
@@ -486,6 +488,18 @@ def main():
     p_setup = sub.add_parser("setup", help="Playwright 브라우저 설치")
     p_setup.set_defaults(func=cmd_setup)
 
+    # init
+    p_init = sub.add_parser("init", help="API 키 설정")
+    p_init.add_argument("--path", help="저장 경로 (기본: ~/.env)")
+    p_init.set_defaults(func=cmd_init)
+
+    # doctor
+    p_doctor = sub.add_parser("doctor", help="환경 점검")
+    p_doctor.set_defaults(func=cmd_doctor)
+
+    # sites
+    p_sites = sub.add_parser("sites", help="지원 사이트 목록")
+    p_sites.set_defaults(func=cmd_sites)
 
     args = parser.parse_args()
 

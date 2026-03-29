@@ -150,10 +150,16 @@ def cmd_search(args):
     if not filename.endswith(".csv"):
         filename += ".csv"
 
-    # 다운로드 폴더에 저장
-    downloads = Path.home() / "Downloads"
-    if not downloads.exists():
-        downloads = Path.home()  # Downloads 없으면 홈 폴더
+    # 다운로드 폴더에 저장 (WSL이면 윈도우 다운로드 폴더 우선)
+    import os
+    win_downloads = Path("/mnt/c/Users") / os.getenv("USER", "daniel") / "Downloads"
+    linux_downloads = Path.home() / "Downloads"
+    if win_downloads.is_dir():
+        downloads = win_downloads
+    elif linux_downloads.is_dir():
+        downloads = linux_downloads
+    else:
+        downloads = Path.home()
     save_path = str(downloads / filename)
 
     to_csv(articles, save_path, query_label)
